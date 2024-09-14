@@ -8,6 +8,8 @@ const Request = require('../models/requestModel');
 const Product = require('../models/productModel');
 const { addToQueue } = require('../workers/imageProcessor');
 const productModel = require('../models/productModel');
+const fs = require('fs');
+const os = require('os');
 
 // Set up multer for in-memory file storage
 const upload = multer({ storage: multer.memoryStorage() });
@@ -80,15 +82,12 @@ const exportCSV = async (req, res) => {
     const { requestId } = req.params;
 
     try {
-        // Fetch processed data for the given request ID
         const products = await productModel.find({ requestId });
         if (!products.length) {
             return res.status(404).json({ message: 'No data found for this request ID.' });
         }
 
-        // Define the path for the output CSV file
-        const outputPath = path.join(__dirname, `../output/output-${requestId}.csv`);
-        // Create a CSV writer
+        const outputPath = path.join(os.tmpdir(), `output-${requestId}.csv`);
         const csvWriter = createCsvWriter({
             path: outputPath,
             header: [
@@ -98,23 +97,29 @@ const exportCSV = async (req, res) => {
                 { id: 'outputImageUrls', title: 'Output Image Urls' },
             ],
         });
-        // Format data for the CSV file
         const records = products.map((product) => {
             const inputUrls = product.inputImageUrls || [];
+            const outputUrls = product.outputImageUrls || [];
 
             return {
                 serialNumber: product.serialNumber || '',
                 productName: product.productName || '',
                 inputImageUrls: inputUrls.join(','),
-                outputImageUrls: inputUrls.join(','),
+                outputImageUrls: outputUrls.join(','),
             };
         });
 
-        // Write records to the CSV file
         await csvWriter.writeRecords(records);
 
-        // Send the CSV file as a response
-        res.download(outputPath, `output-${requestId}.csv`);
+        res.download(outputPath, `output-${requestId}.csv`, (err) => {
+            if (err) {
+                console.error('Error sending the file:', err);
+                res.status(500).json({ message: 'Error sending the file' });
+            }
+            fs.unlink(outputPath, (unlinkErr) => {
+                if (unlinkErr) console.error('Error deleting the file:', unlinkErr);
+            });
+        });
     } catch (error) {
         console.error('Error generating output CSV:', error);
         res.status(500).json({ message: 'Error generating output CSV' });
